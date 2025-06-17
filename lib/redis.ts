@@ -23,7 +23,6 @@ export const connectRedis = async (): Promise<RedisClientType> => {
           return Math.min(retries * 100, 3000);
         },
         connectTimeout: 10000,
-        lazyConnect: true,
       },
     });
 

@@ -42,7 +42,6 @@ async function getStorageClient() {
             return Math.min(retries * 100, 1000);
           },
           connectTimeout: 5000,
-          lazyConnect: true,
         },
       });
 

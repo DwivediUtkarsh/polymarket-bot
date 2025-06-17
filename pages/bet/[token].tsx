@@ -76,7 +76,7 @@ export default function BettingPage({
           title: outcome,
           price: prices[index],
           name: outcome,
-          description: null,
+          description: undefined,
         }));
       }
     } catch (parseError) {
@@ -85,8 +85,8 @@ export default function BettingPage({
 
     // Fallback to default structure
     return [
-      { id: 'yes', title: 'YES', price: 0.5, name: 'YES', description: null },
-      { id: 'no', title: 'NO', price: 0.5, name: 'NO', description: null }
+      { id: 'yes', title: 'YES', price: 0.5, name: 'YES', description: undefined },
+      { id: 'no', title: 'NO', price: 0.5, name: 'NO', description: undefined }
     ];
   };
 
@@ -512,7 +512,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
               title: outcome,
               price: prices[index],
               name: outcome,
-              description: null,
+              description: undefined,
           }));
           }
         } catch (parseError) {
@@ -536,14 +536,14 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
               title: 'Option A',
               price: 0.5,
               name: 'Option A',
-              description: null,
+              description: undefined,
             },
             {
               id: 'no',
               title: 'Option B', 
               price: 0.5,
               name: 'Option B',
-              description: null,
+              description: undefined,
             }
           ];
         }
