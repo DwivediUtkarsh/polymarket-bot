@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { Redis } from '@upstash/redis';
 import { createClient, RedisClientType } from 'redis';
 
 // Session management types
@@ -15,6 +15,7 @@ export interface SessionData {
 
 // Local Redis client for development
 let redisClient: RedisClientType | null = null;
+let upstashClient: Redis | null = null;
 
 const isProduction = process.env.NODE_ENV === 'production';
 const isVercel = process.env.VERCEL === '1';
@@ -24,8 +25,19 @@ const isVercel = process.env.VERCEL === '1';
  */
 async function getStorageClient() {
   if (isProduction || isVercel) {
-    // Use Vercel KV in production
-    return 'vercel-kv';
+    // Use Upstash Redis in production
+    if (!upstashClient) {
+      if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+        throw new Error('Upstash Redis environment variables not configured');
+      }
+      
+      upstashClient = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN,
+      });
+      console.log('✅ Connected to Upstash Redis for production');
+    }
+    return upstashClient;
   } else {
     // Use Redis in development
     if (!redisClient || !redisClient.isOpen) {
@@ -61,9 +73,9 @@ export async function setSession(jti: string, data: SessionData, expirySeconds: 
     const key = `session:${jti}`;
     const value = JSON.stringify(data);
 
-    if (client === 'vercel-kv') {
-      // Use Vercel KV
-      const result = await kv.set(key, value, { 
+    if (client instanceof Redis) {
+      // Use Upstash Redis
+      const result = await client.set(key, value, { 
         ex: expirySeconds,
         nx: true // Only set if key doesn't exist (single-use enforcement)
       });
@@ -93,9 +105,9 @@ export async function getSession(jti: string): Promise<SessionData | null> {
 
     let data: string | null = null;
 
-    if (client === 'vercel-kv') {
-      // Use Vercel KV
-      data = await kv.get(key);
+    if (client instanceof Redis) {
+      // Use Upstash Redis
+      data = await client.get(key);
     } else {
       // Use Redis for development
       data = await (client as RedisClientType).get(key);
@@ -138,9 +150,9 @@ export async function useSession(jti: string): Promise<SessionData | null> {
       usedAt: new Date().toISOString() 
     };
     
-    if (client === 'vercel-kv') {
-      // Use Vercel KV - overwrite existing key
-      await kv.set(key, JSON.stringify(usedData));
+    if (client instanceof Redis) {
+      // Use Upstash Redis - overwrite existing key
+      await client.set(key, JSON.stringify(usedData));
     } else {
       // Use Redis for development
       await (client as RedisClientType).set(key, JSON.stringify(usedData), { XX: true });
@@ -161,10 +173,9 @@ export async function getSessionTTL(jti: string): Promise<number> {
     const client = await getStorageClient();
     const key = `session:${jti}`;
 
-    if (client === 'vercel-kv') {
-      // Vercel KV doesn't have direct TTL, but we can check if key exists
-      const exists = await kv.exists(key);
-      return exists ? 300 : -1; // Return default or -1 if not exists
+    if (client instanceof Redis) {
+      // Use Upstash Redis
+      return await client.ttl(key);
     } else {
       // Use Redis for development
       return await (client as RedisClientType).ttl(key);
@@ -183,9 +194,9 @@ export async function deleteSession(jti: string): Promise<boolean> {
     const client = await getStorageClient();
     const key = `session:${jti}`;
 
-    if (client === 'vercel-kv') {
-      // Use Vercel KV
-      const result = await kv.del(key);
+    if (client instanceof Redis) {
+      // Use Upstash Redis
+      const result = await client.del(key);
       return result > 0;
     } else {
       // Use Redis for development
@@ -204,20 +215,34 @@ export async function deleteSession(jti: string): Promise<boolean> {
 export async function healthCheck(): Promise<{ status: string; storage: string }> {
   try {
     const client = await getStorageClient();
-    
-    if (client === 'vercel-kv') {
-      // Test Vercel KV with a simple operation
-      const testKey = `health:${Date.now()}`;
-      await kv.set(testKey, 'ok', { ex: 10 });
-      await kv.del(testKey);
-      return { status: 'healthy', storage: 'vercel-kv' };
+    const testKey = `health:${Date.now()}`;
+
+    if (client instanceof Redis) {
+      // Test Upstash Redis
+      await client.set(testKey, 'test', { ex: 10 });
+      const result = await client.get(testKey);
+      await client.del(testKey);
+      
+      return {
+        status: result === 'test' ? 'healthy' : 'unhealthy',
+        storage: 'upstash-redis'
+      };
     } else {
-      // Test Redis
-      await (client as RedisClientType).ping();
-      return { status: 'healthy', storage: 'redis' };
+      // Test local Redis
+      await (client as RedisClientType).setEx(testKey, 10, 'test');
+      const result = await (client as RedisClientType).get(testKey);
+      await (client as RedisClientType).del(testKey);
+      
+      return {
+        status: result === 'test' ? 'healthy' : 'unhealthy',
+        storage: 'local-redis'
+      };
     }
   } catch (error) {
-    console.error('Storage health check failed:', error);
-    return { status: 'unhealthy', storage: isProduction ? 'vercel-kv' : 'redis' };
+    console.error('Health check failed:', error);
+    return {
+      status: 'unhealthy',
+      storage: 'unknown'
+    };
   }
 } 
