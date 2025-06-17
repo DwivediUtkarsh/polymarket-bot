@@ -114,7 +114,11 @@ export async function getSession(jti: string): Promise<SessionData | null> {
     }
 
     if (data) {
-      return JSON.parse(data) as SessionData;
+      if (typeof data === 'string') {
+        return JSON.parse(data) as SessionData;
+      } else if (typeof data === 'object' && data !== null) {
+        return data as SessionData;
+      }
     }
     
     return null;
