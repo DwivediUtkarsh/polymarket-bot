@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import jwt from 'jsonwebtoken';
-import { getSession, getSessionTTL } from '../../../../lib/kv';
+import { getSession, getSessionTTL } from '../../../../lib/upstash-redis';
 import { validateToken, sendError, sendSuccess } from '../../../../lib/validation';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {

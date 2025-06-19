@@ -31,6 +31,8 @@ export interface Market {
   liquidity?: number;
   endDate?: string;
   lastUpdated?: string;
+  conditionId?: string;
+  tokens?: string[]; // Token IDs for CLOB subscription
 }
 
 export interface MarketOutcome {
@@ -39,6 +41,7 @@ export interface MarketOutcome {
   price: number;
   name?: string;
   description?: string;
+  tokenId?: string; // For CLOB subscription
 }
 
 // Betting Types
@@ -66,28 +69,59 @@ export interface Bet {
   };
 }
 
-// WebSocket Types
-export interface WebSocketMessage {
-  type: 'priceUpdate' | 'marketUpdate' | 'error' | 'connected' | 'disconnected';
-  marketId?: string;
-  outcomes?: MarketOutcome[];
+// CLOB WebSocket Types
+export interface CLOBBookData {
+  asset_id: string;
+  bids: [string, string][]; // [price, size]
+  asks: [string, string][];
+}
+
+export interface CLOBTradeData {
+  market: string;
+  asset_id: string;
+  side: 'BUY' | 'SELL';
+  size: string;
+  price: string;
+  timestamp: number;
+}
+
+export interface CLOBWebSocketMessage {
+  event_type?: 'book' | 'price_change' | 'tick_size_change';
+  asset_id?: string;
+  market?: string;
   timestamp?: string;
-  error?: string;
+  hash?: string;
+  buys?: [string, string][]; // [price, size] 
+  sells?: [string, string][]; // [price, size]
+  // Generic type field used for ping/pong and other control messages
+  type?: string;
+  // Legacy fields (keeping for compatibility)
+  channel?: 'book' | 'trades' | 'ticker';
+  data?: CLOBBookData | CLOBTradeData | any;
 }
 
-export interface WebSocketConfig {
-  url: string;
-  marketId?: string;
-  autoReconnect?: boolean;
-  reconnectInterval?: number;
-  maxReconnectAttempts?: number;
+export interface CLOBSubscription {
+  type: 'subscribe' | 'unsubscribe';
+  channel: 'market' | 'user';
+  assets_ids?: string[];
+  markets?: string[];
 }
 
-export interface WebSocketState {
+export interface CLOBLiveOdds {
+  tokenId: string;
+  price: number;
+  spread: number;
+  lastTradePrice?: number;
+  volume24h?: number;
+  timestamp: number;
+}
+
+export interface CLOBWebSocketState {
   isConnected: boolean;
   connectionStatus: 'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting';
-  lastMessage: WebSocketMessage | null;
+  liveOdds: Record<string, CLOBLiveOdds>;
   error: string | null;
+  lastUpdate: number | null;
 }
 
 // Component Props

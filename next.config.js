@@ -5,7 +5,13 @@ const nextConfig = {
   
   // Environment variables
   env: {
-    CUSTOM_KEY: 'polymarket-betting-ui',
+    CUSTOM_KEY: process.env.CUSTOM_KEY,
+  },
+
+  // Experimental features for better hot reload
+  experimental: {
+    webpackBuildWorker: true,
+    optimizePackageImports: ['axios', 'react-hot-toast'],
   },
 
   // Security headers
@@ -32,11 +38,27 @@ const nextConfig = {
           },
         ],
       },
+      {
+        source: '/api/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, DELETE, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
+        ],
+      },
     ];
   },
 
   // Rewrites for API proxy (optional)
   async rewrites() {
+    if (process.env.NODE_ENV === 'development') {
+      return [
+        {
+          source: '/api/proxy/gamma/:path*',
+          destination: 'https://gamma-api.polymarket.com/:path*',
+        },
+      ];
+    }
     return [
       {
         source: '/api/proxy/:path*',
@@ -45,8 +67,9 @@ const nextConfig = {
     ];
   },
 
-  // Webpack configuration for WebSocket support
-  webpack: (config, { isServer }) => {
+  // Enhanced Webpack configuration
+  webpack: (config, { dev, isServer }) => {
+    // WebSocket support
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
@@ -55,6 +78,25 @@ const nextConfig = {
         tls: false,
       };
     }
+
+    // Development optimizations
+    if (dev) {
+      config.cache = {
+        type: 'filesystem',
+        buildDependencies: {
+          config: [__filename],
+        },
+      };
+      
+      // Prevent webpack from watching node_modules
+      config.watchOptions = {
+        ...config.watchOptions,
+        ignored: ['**/node_modules/**', '**/.git/**', '**/.next/**'],
+        aggregateTimeout: 300,
+        poll: 1000,
+      };
+    }
+
     return config;
   },
 
@@ -96,6 +138,11 @@ const nextConfig = {
     },
     typescript: {
       ignoreBuildErrors: false,
+    },
+    // Better error overlay
+    onDemandEntries: {
+      maxInactiveAge: 60 * 1000,
+      pagesBufferLength: 5,
     },
   }),
 };

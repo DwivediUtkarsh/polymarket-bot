@@ -11,7 +11,8 @@ import OddsCard from '../../components/OddsCard';
 import BettingInterface from '../../components/BettingInterface';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import ErrorBoundary from '../../components/ErrorBoundary';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import { LiveOddsDisplay } from '../../components/LiveOddsDisplay';
+import { useCLOBWebSocket } from '../../hooks/useWebSocket';
 import { validateSession, placeBet } from '../../lib/api';
 import { Market, SessionData, BetOutcome } from '../../types';
 
@@ -37,12 +38,28 @@ export default function BettingPage({
   const [isSessionExpired, setIsSessionExpired] = useState(false);
   const [isRefreshingOdds, setIsRefreshingOdds] = useState(false);
   
-  // WebSocket for live odds
-  const { isConnected, connectionStatus, lastMessage } = useWebSocket({
-    url: process.env.NEXT_PUBLIC_WS_URL || 'wss://stream.polymarket.com/markets',
-    marketId: market?.id,
+  // Extract data for CLOB WebSocket
+  const tokenIds = market?.outcomes?.map(o => o.tokenId).filter((id): id is string => Boolean(id)) || [];
+  const outcomes = market?.outcomes?.map(o => o.title) || [];
+  
+  // CLOB WebSocket for live odds
+  const clobState = useCLOBWebSocket({
+    marketId: market?.id || '',
+    tokenIds,
+    outcomes,
     autoReconnect: true,
   });
+
+  // Debug logging for WebSocket connection
+  useEffect(() => {
+    console.log('🔍 CLOB WebSocket Config:', {
+      marketId: market?.id,
+      tokenIds,
+      outcomes,
+      totalOutcomes: market?.outcomes?.length,
+      mappedOutcomes: market?.outcomes?.map(o => ({ title: o.title, tokenId: o.tokenId }))
+    });
+  }, [market, tokenIds, outcomes]);
 
   // Session expiry timer
   const timerRef = useRef<NodeJS.Timeout>();
@@ -71,13 +88,30 @@ export default function BettingPage({
       }
 
       if (outcomes.length === prices.length && outcomes.length > 0) {
-        return outcomes.map((outcome, index) => ({
+        // Try to get real CLOB token IDs from the API response
+        let realTokenIds: string[] = [];
+        if (marketData.clobTokenIds) {
+          try {
+            realTokenIds = JSON.parse(marketData.clobTokenIds);
+            console.log('✅ Successfully parsed CLOB token IDs:', realTokenIds);
+          } catch (e) {
+            console.warn('❌ Failed to parse clobTokenIds:', e, 'Raw value:', marketData.clobTokenIds);
+          }
+        } else {
+          console.warn('⚠️ No clobTokenIds found in market data');
+        }
+
+        const processedOutcomes = outcomes.map((outcome, index) => ({
           id: `outcome_${index}`,
           title: outcome,
           price: prices[index],
           name: outcome,
-          description: undefined,
+          tokenId: realTokenIds[index] || `token_${marketData.id}_${index}`, // Use real token ID if available
         }));
+        
+        console.log('📋 Processed outcomes with token IDs:', processedOutcomes.map(o => ({ title: o.title, tokenId: o.tokenId })));
+        
+        return processedOutcomes;
       }
     } catch (parseError) {
       console.warn('Failed to parse market odds:', parseError);
@@ -85,19 +119,25 @@ export default function BettingPage({
 
     // Fallback to default structure
     return [
-      { id: 'yes', title: 'YES', price: 0.5, name: 'YES', description: undefined },
-      { id: 'no', title: 'NO', price: 0.5, name: 'NO', description: undefined }
+      { id: 'yes', title: 'YES', price: 0.5, name: 'YES', tokenId: 'token_0_0' },
+      { id: 'no', title: 'NO', price: 0.5, name: 'NO', tokenId: 'token_0_1' }
     ];
   };
 
-  // Function to refresh market prices
+  // Function to refresh market prices (keeping for fallback)
   const refreshMarketPrices = async () => {
     if (!market?.id || isRefreshingOdds) return;
 
     try {
       setIsRefreshingOdds(true);
+      
+      // Use local proxy in development to avoid CORS
+      const apiUrl = process.env.NODE_ENV === 'development'
+        ? '/api/proxy/gamma'
+        : process.env.NEXT_PUBLIC_POLYMARKET_API_URL || 'https://gamma-api.polymarket.com';
+        
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_POLYMARKET_API_URL || 'https://gamma-api.polymarket.com'}/markets/${market.id}`,
+        `${apiUrl}/markets/${market.id}`,
         { timeout: 5000 }
       );
 
@@ -134,22 +174,25 @@ export default function BettingPage({
     }
   };
 
-  // Set up price refresh interval
+  // Set up price refresh interval (keeping for fallback when WebSocket fails)
   useEffect(() => {
     if (!market?.id) return;
 
-    // Refresh immediately on mount
-    refreshMarketPrices();
+    // Only use polling as fallback if CLOB WebSocket is not connected
+    if (!clobState.isConnected) {
+      // Refresh immediately on mount
+      refreshMarketPrices();
 
-    // Set up 2-second interval
-    priceRefreshRef.current = setInterval(refreshMarketPrices, 2000);
+      // Set up 2-second interval
+      priceRefreshRef.current = setInterval(refreshMarketPrices, 2000);
+    }
 
     return () => {
       if (priceRefreshRef.current) {
         clearInterval(priceRefreshRef.current);
       }
     };
-  }, [market?.id]); // Only depend on market ID to avoid recreating interval
+  }, [market?.id, clobState.isConnected]);
 
   // Handle errors
   if (error) {
@@ -169,23 +212,6 @@ export default function BettingPage({
       </div>
     );
   }
-
-  // Update market data when WebSocket message received
-  useEffect(() => {
-    if (lastMessage?.type === 'priceUpdate' && lastMessage.marketId === market.id) {
-      setMarket(prev => ({
-        ...prev,
-        outcomes: lastMessage.outcomes || prev.outcomes,
-        lastUpdated: new Date().toISOString(),
-      }));
-      
-      // Show visual feedback for price update
-      toast.success('Odds updated!', {
-        duration: 2000,
-        icon: '📈',
-      });
-    }
-  }, [lastMessage, market.id]);
 
   // Session expiry countdown
   useEffect(() => {
@@ -274,125 +300,128 @@ export default function BettingPage({
 
   return (
     <ErrorBoundary>
-      <Head>
-        <title>Place Bet - {market.question || market.title}</title>
-        <meta name="description" content="Place your bet on Polymarket" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="robots" content="noindex,nofollow" />
-      </Head>
+      <div key={`betting-page-${market.id}`}>
+        <Head>
+          <title>{`Place Bet - ${market.question || market.title || 'Polymarket'}`}</title>
+          <meta name="description" content="Place your bet on Polymarket" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+        </Head>
 
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-        <Toaster 
-          position="top-center"
-          toastOptions={{
-            duration: 4000,
-            style: {
-              background: '#363636',
-              color: '#fff',
-            },
-          }}
-        />
-
-        {/* Header */}
-        <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-10">
-          <div className="max-w-4xl mx-auto px-4 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                  <span className="text-white font-bold">P</span>
-                </div>
-                <h1 className="text-xl font-bold text-gray-900">Polymarket Betting</h1>
-              </div>
-              
-              <div className="flex items-center space-x-4">
-                {/* Connection Status */}
-                <div className="flex items-center space-x-2">
-                  <div className={`w-2 h-2 rounded-full ${
-                    isConnected ? 'bg-green-500' : 'bg-red-500'
-                  }`} />
-                  <span className="text-sm text-gray-600">
-                    {connectionStatus}
-                  </span>
-                </div>
-
-                {/* Live refresh indicator */}
-                <div className="flex items-center space-x-2">
-                  <div className={`w-2 h-2 rounded-full ${
-                    isRefreshingOdds ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
-                  }`} />
-                  <span className="text-sm text-gray-600">
-                    Live odds
-                  </span>
-                </div>
-
-                {/* Session Timer */}
-                {sessionData.expiresAt && (
-                  <SessionTimer expiresAt={sessionData.expiresAt} />
-                )}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Main Content */}
-        <main className="max-w-4xl mx-auto px-4 py-8">
-          <div className="space-y-6">
-            {/* Market Info */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex-1">
-                  <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                    {market.question || market.title}
-                  </h2>
-                  <p className="text-gray-600">
-                    Market ID: {market.id}
-                  </p>
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+          <Toaster position="top-right" />
+          
+          {/* Header */}
+          <header className="bg-white shadow-sm border-b border-gray-200">
+            <div className="max-w-4xl mx-auto px-4 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                    <span className="text-white font-bold">P</span>
+                  </div>
+                  <h1 className="text-xl font-bold text-gray-900">Polymarket Betting</h1>
                 </div>
                 
-                {market.lastUpdated && (
-                  <div className="text-right">
-                    <p className="text-sm text-gray-500">Last updated</p>
-                    <p className="text-sm font-medium text-gray-700">
-                      {new Date(market.lastUpdated).toLocaleTimeString()}
+                <div className="flex items-center space-x-4">
+                  {/* CLOB Connection Status */}
+                  <div className="flex items-center space-x-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      clobState.isConnected ? 'bg-green-500' : 'bg-red-500'
+                    }`} />
+                    <span className="text-sm text-gray-600">
+                      {clobState.connectionStatus}
+                    </span>
+                  </div>
+
+                  {/* Live refresh indicator */}
+                  <div className="flex items-center space-x-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      isRefreshingOdds ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
+                    }`} />
+                    <span className="text-sm text-gray-600">
+                      Live odds
+                    </span>
+                  </div>
+
+                  {/* Session Timer */}
+                  {sessionData.expiresAt && (
+                    <SessionTimer expiresAt={sessionData.expiresAt} />
+                  )}
+                </div>
+              </div>
+            </div>
+          </header>
+
+          {/* Main Content */}
+          <main className="max-w-4xl mx-auto px-4 py-8">
+            <div className="space-y-6">
+              {/* Market Info */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex-1">
+                    <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                      {market.question || market.title}
+                    </h2>
+                    <p className="text-gray-600">
+                      Market ID: {market.id}
                     </p>
                   </div>
-                )}
+                  
+                  {market.lastUpdated && (
+                    <div className="text-right">
+                      <p className="text-sm text-gray-500">Last updated</p>
+                      <p className="text-sm font-medium text-gray-700">
+                        {new Date(market.lastUpdated).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Regular Odds Display */}
+                <div className="grid md:grid-cols-2 gap-6">
+                  {market.outcomes?.map((outcome, idx) => (
+                    <OddsCard
+                      key={outcome.id}
+                      title={outcome.title}
+                      probability={outcome.price || 0}
+                      accentColor={idx === 0 ? 'green' : 'red'}
+                    />
+                  ))}
+                </div>
               </div>
 
-              {/* Live Odds Display */}
-              <div className="grid md:grid-cols-2 gap-6">
-                {market.outcomes?.map((outcome, idx) => (
-                  <OddsCard
-                    key={outcome.id}
-                    title={outcome.title}
-                    probability={outcome.price || 0}
-                    accentColor={idx === 0 ? 'green' : 'red'}
-                  />
-                ))}
+              {/* Live Odds Display (New CLOB WebSocket Section) */}
+              <LiveOddsDisplay 
+                liveOdds={clobState.liveOdds}
+                executedTrades={clobState.executedTrades}
+                outcomes={outcomes}
+                tokenIds={tokenIds}
+                isConnected={clobState.isConnected}
+                connectionStatus={clobState.connectionStatus}
+                lastUpdate={clobState.lastUpdate}
+              />
+
+              {/* Betting Interface */}
+              <BettingInterface
+                market={market}
+                onPlaceBet={handlePlaceBet}
+                isPlacingBet={isPlacingBet}
+                sessionData={sessionData}
+              />
+            </div>
+          </main>
+
+          {/* Footer */}
+          <footer className="bg-white border-t border-gray-200 mt-12">
+            <div className="max-w-4xl mx-auto px-4 py-8">
+              <div className="text-center text-gray-600">
+                <p>Powered by Polymarket • Secure Betting Platform</p>
+                <p className="text-sm mt-2">
+                  Session expires at {new Date(sessionData.expiresAt).toLocaleString()}
+                </p>
               </div>
             </div>
-
-            {/* Betting Interface */}
-            <BettingInterface
-              market={market}
-              onPlaceBet={handlePlaceBet}
-              isPlacingBet={isPlacingBet}
-              sessionData={sessionData}
-            />
-          </div>
-        </main>
-
-        {/* Footer */}
-        <footer className="bg-white border-t border-gray-200 mt-12">
-          <div className="max-w-4xl mx-auto px-4 py-6">
-            <div className="text-center text-sm text-gray-500">
-              <p>Powered by Polymarket • Secure betting from Discord</p>
-              <p className="mt-1">
-                Session ID: {sessionData.jti?.substring(0, 8)}...
-              </p>
-            </div>
-          </div>
-        </footer>
+          </footer>
+        </div>
       </div>
     </ErrorBoundary>
   );
@@ -462,15 +491,31 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     // Fetch market data
     let market;
     try {
+      // Use local proxy to avoid CORS issues in development
+      const apiBaseUrl = process.env.NODE_ENV === 'development' 
+        ? `${baseUrl}/api/proxy/gamma`
+        : process.env.NEXT_PUBLIC_POLYMARKET_API_URL || 'https://gamma-api.polymarket.com';
+        
+      console.log('🔍 Fetching market data from:', `${apiBaseUrl}/markets/${marketId}`);
+      
       const marketResponse = await axios.get(
-        `${process.env.NEXT_PUBLIC_POLYMARKET_API_URL}/markets/${marketId}`,
+        `${apiBaseUrl}/markets/${marketId}`,
         {
           timeout: 10000,
         }
       );
       market = marketResponse.data;
+      
+      console.log('📊 Market data received:', {
+        id: market?.id,
+        question: market?.question,
+        clobTokenIds: market?.clobTokenIds,
+        outcomes: market?.outcomes,
+        outcomePrices: market?.outcomePrices
+      });
+      
     } catch (marketError) {
-      console.warn('Failed to fetch market data, using fallback:', marketError);
+      console.warn('Failed to fetch market data, using fallback:', marketError instanceof Error ? marketError.message : marketError);
     }
 
     // Ensure market has proper structure with fallback
@@ -507,13 +552,30 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
           // If we successfully parsed both and they match in length
           if (outcomes.length === prices.length && outcomes.length > 0) {
-            return outcomes.map((outcome, index) => ({
+            // Try to get real CLOB token IDs from the API response
+            let realTokenIds: string[] = [];
+            if (market?.clobTokenIds) {
+              try {
+                realTokenIds = JSON.parse(market.clobTokenIds);
+                console.log('✅ Successfully parsed CLOB token IDs:', realTokenIds);
+              } catch (e) {
+                console.warn('❌ Failed to parse clobTokenIds:', e, 'Raw value:', market.clobTokenIds);
+              }
+            } else {
+              console.warn('⚠️ No clobTokenIds found in market data');
+            }
+
+            const processedOutcomes = outcomes.map((outcome, index) => ({
               id: `outcome_${index}`,
               title: outcome,
               price: prices[index],
               name: outcome,
-              description: undefined,
-          }));
+              tokenId: realTokenIds[index] || `token_${marketId}_${index}`, // Use real token ID if available
+            }));
+            
+            console.log('📋 Processed outcomes with token IDs:', processedOutcomes.map(o => ({ title: o.title, tokenId: o.tokenId })));
+            
+            return processedOutcomes;
           }
         } catch (parseError) {
           console.warn('Failed to parse market data on server:', parseError);
@@ -526,7 +588,8 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
             title: token.outcome || (index === 0 ? 'Option A' : 'Option B'),
             price: typeof token.price === 'string' ? parseFloat(token.price) : (token.price || 0.5),
             name: token.outcome || (index === 0 ? 'Option A' : 'Option B'),
-            description: token.description || null,
+            ...(token.description ? { description: token.description } : {}),
+            tokenId: token.id || `token_${marketId}_${index}`,
           }));
         } else {
           // Final fallback to neutral structure (avoid showing fake 65%/35%)
@@ -536,14 +599,14 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
               title: 'Option A',
               price: 0.5,
               name: 'Option A',
-              description: undefined,
+              tokenId: 'token_0_0',
             },
             {
               id: 'no',
               title: 'Option B', 
               price: 0.5,
               name: 'Option B',
-              description: undefined,
+              tokenId: 'token_0_1',
             }
           ];
         }
@@ -560,10 +623,6 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
           expiresAt: sessionData?.expiresAt || new Date(Date.now() + 300000).toISOString(), // 5 min default
           discordUser: sessionData?.discordUser || null,
           guildName: sessionData?.guildName || null,
-          // Clean sessionData to remove undefined values
-          ...(sessionData ? Object.fromEntries(
-            Object.entries(sessionData).filter(([_, value]) => value !== undefined)
-          ) : {}),
         },
         initialMarket: processedMarket,
       },
@@ -575,8 +634,26 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     return {
       props: {
         token,
-        initialSessionData: null,
-        initialMarket: null,
+        initialSessionData: {
+          jti: '',
+          userId: '',
+          marketId: '',
+          expiresAt: new Date().toISOString(),
+          discordUser: null,
+          guildName: null,
+        },
+        initialMarket: {
+          id: '',
+          title: 'Error Loading Market',
+          question: 'Error Loading Market',
+          description: null,
+          active: false,
+          volume: null,
+          liquidity: null,
+          endDate: null,
+          lastUpdated: new Date().toISOString(),
+          outcomes: [],
+        },
         error: 'Session validation failed. Please try again.',
       },
     };
