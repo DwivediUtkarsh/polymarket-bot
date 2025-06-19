@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface LiveOdds {
   tokenId: string;
@@ -32,6 +32,8 @@ interface LiveOddsDisplayProps {
   lastUpdate: number | null;
 }
 
+type OddsFormat = 'american' | 'european';
+
 export function LiveOddsDisplay({ 
   liveOdds, 
   executedTrades, 
@@ -41,6 +43,8 @@ export function LiveOddsDisplay({
   connectionStatus,
   lastUpdate 
 }: LiveOddsDisplayProps) {
+  const [oddsFormat, setOddsFormat] = useState<OddsFormat>('american');
+
   // Create token-to-outcome mapping
   const tokenToOutcome: Record<string, string> = {};
   tokenIds.forEach((tokenId, index) => {
@@ -73,6 +77,36 @@ export function LiveOddsDisplay({
     }
   };
 
+  const renderOdds = (odds: LiveOdds) => {
+    if (oddsFormat === 'american') {
+      return (
+        <div className="text-center bg-green-50 p-3 rounded-lg border border-green-100">
+          <div className={`text-2xl font-bold ${
+            odds.americanOdds < 0 ? 'text-green-600' : 'text-orange-600'
+          }`}>
+            {formatAmericanOdds(odds.americanOdds)}
+          </div>
+          <div className="text-xs text-gray-600 font-medium">American Odds</div>
+          <div className="text-xs text-gray-500 mt-1">
+            {odds.americanOdds < 0 ? 'Favorite' : 'Underdog'}
+          </div>
+        </div>
+      );
+    } else {
+      return (
+        <div className="text-center bg-purple-50 p-3 rounded-lg border border-purple-100">
+          <div className="text-2xl font-bold text-purple-600">
+            {odds.europeanOdds.toFixed(2)}
+          </div>
+          <div className="text-xs text-gray-600 font-medium">European Odds</div>
+          <div className="text-xs text-gray-500 mt-1">
+            {odds.europeanOdds < 2 ? 'Favorite' : 'Underdog'}
+          </div>
+        </div>
+      );
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Connection Status */}
@@ -98,14 +132,43 @@ export function LiveOddsDisplay({
       {/* Live Odds Section */}
       <div className="bg-white rounded-lg shadow-md border border-gray-200">
         <div className="p-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-            📊 Live Market Odds
-            {isConnected && (
-              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                LIVE
-              </span>
-            )}
-          </h3>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-gray-900">📊 Live Market Odds</h3>
+              {isConnected && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                  LIVE
+                </span>
+              )}
+            </div>
+            
+            {/* Odds Format Toggle */}
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-gray-700">Odds Format:</span>
+              <div className="relative inline-flex bg-gray-200 rounded-lg p-1">
+                <button
+                  onClick={() => setOddsFormat('american')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-200 ${
+                    oddsFormat === 'american'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  🇺🇸 American
+                </button>
+                <button
+                  onClick={() => setOddsFormat('european')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-200 ${
+                    oddsFormat === 'european'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  🇪🇺 European
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
         
         <div className="p-4 space-y-4">
@@ -128,7 +191,7 @@ export function LiveOddsDisplay({
                 
                 {odds ? (
                   <>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
                       <div className="text-center bg-blue-50 p-3 rounded-lg border border-blue-100">
                         <div className="text-2xl font-bold text-blue-600">
                           {odds.probability.toFixed(1)}%
@@ -136,21 +199,7 @@ export function LiveOddsDisplay({
                         <div className="text-xs text-gray-600 font-medium">Probability</div>
                       </div>
                       
-                      <div className="text-center bg-green-50 p-3 rounded-lg border border-green-100">
-                        <div className={`text-2xl font-bold ${
-                          odds.americanOdds < 0 ? 'text-green-600' : 'text-orange-600'
-                        }`}>
-                          {formatAmericanOdds(odds.americanOdds)}
-                        </div>
-                        <div className="text-xs text-gray-600 font-medium">American</div>
-                      </div>
-                      
-                      <div className="text-center bg-purple-50 p-3 rounded-lg border border-purple-100">
-                        <div className="text-2xl font-bold text-purple-600">
-                          {odds.europeanOdds.toFixed(2)}
-                        </div>
-                        <div className="text-xs text-gray-600 font-medium">European</div>
-                      </div>
+                      {renderOdds(odds)}
                       
                       <div className="text-center bg-gray-100 p-3 rounded-lg border border-gray-200">
                         <div className="text-2xl font-bold text-gray-700">

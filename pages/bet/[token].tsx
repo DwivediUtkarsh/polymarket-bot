@@ -6,9 +6,8 @@ import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import toast, { Toaster } from 'react-hot-toast';
 import React from 'react';
-import OddsCard from '../../components/OddsCard';
 
-import BettingInterface from '../../components/BettingInterface';
+import MarketAndBettingInterface from '../../components/MarketAndBettingInterface';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import ErrorBoundary from '../../components/ErrorBoundary';
 import { LiveOddsDisplay } from '../../components/LiveOddsDisplay';
@@ -354,42 +353,15 @@ export default function BettingPage({
           {/* Main Content */}
           <main className="max-w-4xl mx-auto px-4 py-8">
             <div className="space-y-6">
-              {/* Market Info */}
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                      {market.question || market.title}
-                    </h2>
-                    <p className="text-gray-600">
-                      Market ID: {market.id}
-                    </p>
-                  </div>
-                  
-                  {market.lastUpdated && (
-                    <div className="text-right">
-                      <p className="text-sm text-gray-500">Last updated</p>
-                      <p className="text-sm font-medium text-gray-700">
-                        {new Date(market.lastUpdated).toLocaleTimeString()}
-                      </p>
-                    </div>
-                  )}
-                </div>
+              {/* Combined Market Info and Betting Interface */}
+              <MarketAndBettingInterface
+                market={market}
+                onPlaceBet={handlePlaceBet}
+                isPlacingBet={isPlacingBet}
+                sessionData={sessionData}
+              />
 
-                {/* Regular Odds Display */}
-                <div className="grid md:grid-cols-2 gap-6">
-                  {market.outcomes?.map((outcome, idx) => (
-                    <OddsCard
-                      key={outcome.id}
-                      title={outcome.title}
-                      probability={outcome.price || 0}
-                      accentColor={idx === 0 ? 'green' : 'red'}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Live Odds Display (New CLOB WebSocket Section) */}
+              {/* Live Odds Display (CLOB WebSocket Section) */}
               <LiveOddsDisplay 
                 liveOdds={clobState.liveOdds}
                 executedTrades={clobState.executedTrades}
@@ -398,14 +370,6 @@ export default function BettingPage({
                 isConnected={clobState.isConnected}
                 connectionStatus={clobState.connectionStatus}
                 lastUpdate={clobState.lastUpdate}
-              />
-
-              {/* Betting Interface */}
-              <BettingInterface
-                market={market}
-                onPlaceBet={handlePlaceBet}
-                isPlacingBet={isPlacingBet}
-                sessionData={sessionData}
               />
             </div>
           </main>
